@@ -29,34 +29,38 @@ then
   exit 1
 fi
 
-AWS_ADDRESSES_TO_USE=$(grep --color -A2 'Address' $1 | sed 's/.*:\ \(.*\)$/\1/' | grep '^[0-9].*$' | sed 's/^\(.*\)\/.*$/\1/')
+AWS_ADDRESSES_TO_USE=$(grep --color -A2 'Address' $1 | sed 's/.*:\ \(.*\)$/\1/' | grep '[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}\.[0-9]\{1,3\}' | sed 's/^\(.*\)\/.*$/\1/')
 read -a AWS_ADDRESSES_TO_USE <<< $AWS_ADDRESSES_TO_USE
 
-AWS_SECRETS_TO_USE=$(grep 'Pre-Shared\ Key.*:' $1 | sed 's/.*: \(.*\)$/\1/')
+AWS_SECRETS_TO_USE=$(grep 'Secret' $1 | sed 's/.*: \(.*\)$/\1/')
 read -a AWS_SECRETS_TO_USE <<< $AWS_SECRETS_TO_USE
 
-AWS_CUSTOMER_ASN_TO_USE=$(grep 'Customer.*Gateway.*ASN'  $1  |awk -F: '{print $2}'| sed -e 's/[\t\  ]//g')
+AWS_CUSTOMER_ASN_TO_USE=$(grep '(ASN)' $1  |awk -F: '{print $2}'| sed -e 's/[\t\  ]//g')
 read -a AWS_CUSTOMER_ASN_TO_USE <<< $AWS_CUSTOMER_ASN_TO_USE
 
-AWS_VIRTUAL_GATEWAY_ASN_TO_USE=$(grep 'Virtual.*Private.*Gateway.*ASN'  $1 |awk -F: '{print $2}'| sed -e 's/[\t\  ]//g')
+AWS_VIRTUAL_GATEWAY_ASN_TO_USE=$(grep 'Remote AS' $1 |awk -F: '{print $2}'| sed -e 's/[\t\  ]//g')
 read -a AWS_VIRTUAL_GATEWAY_ASN_TO_USE <<< $AWS_VIRTUAL_GATEWAY_ASN_TO_USE
 
+echo -n "Type the name of the VPN to add as a comment (Enter to use 'AWS-VPN' as default): "
+read VPN_NAME
+if [ x == x$VPN_NAME ];
+then
+  VPN_NAME="AWS-VPN"
+fi
 
 # Tunnel 1 details
 AWS_TUNNEL1_PUBLIC_ADDR="${AWS_ADDRESSES_TO_USE[1]}"
 AWS_TUNNEL1_INSIDE_CUSTOMER_GATEWAY_ADDR="${AWS_ADDRESSES_TO_USE[2]}"
 AWS_TUNNEL1_INSIDE_VIRTUAL_GATEWAY_ADDR="${AWS_ADDRESSES_TO_USE[3]}"
-AWS_TUNNEL1_INSIDE_NETWORK=$(echo $AWS_TUNNEL1_INSIDE_VIRTUAL_GATEWAY_ADDR | sed 's/\(^.*\..*\..*\.\).*$/\10/')
 AWS_TUNNEL1_SHARED_SECRET="${AWS_SECRETS_TO_USE[0]}"
 
 AWS_TUNNEL1_CUSTOMER_ASN="${AWS_CUSTOMER_ASN_TO_USE[0]}"
 AWS_TUNNEL1_VIRTUAL_GATEWAY_ASN="${AWS_VIRTUAL_GATEWAY_ASN_TO_USE[0]}"
 
 # Tunnel 2 details
-AWS_TUNNEL2_PUBLIC_ADDR="${AWS_ADDRESSES_TO_USE[7]}"
-AWS_TUNNEL2_INSIDE_CUSTOMER_GATEWAY_ADDR="${AWS_ADDRESSES_TO_USE[8]}"
-AWS_TUNNEL2_INSIDE_VIRTUAL_GATEWAY_ADDR="${AWS_ADDRESSES_TO_USE[9]}"
-AWS_TUNNEL2_INSIDE_NETWORK=$(echo $AWS_TUNNEL2_INSIDE_VIRTUAL_GATEWAY_ADDR | sed 's/\(^.*\..*\..*\.\).*$/\10/')
+AWS_TUNNEL2_PUBLIC_ADDR="${AWS_ADDRESSES_TO_USE[13]}"
+AWS_TUNNEL2_INSIDE_CUSTOMER_GATEWAY_ADDR="${AWS_ADDRESSES_TO_USE[14]}"
+AWS_TUNNEL2_INSIDE_VIRTUAL_GATEWAY_ADDR="${AWS_ADDRESSES_TO_USE[15]}"
 AWS_TUNNEL2_SHARED_SECRET="${AWS_SECRETS_TO_USE[1]}"
 
 AWS_TUNNEL2_CUSTOMER_ASN="${AWS_CUSTOMER_ASN_TO_USE[1]}"
@@ -74,7 +78,7 @@ then
   LOCAL_NET=$DEFAULT_LOCAL_NET
 fi
 
-DEFAULT_LOCAL_INTERFACE="ether1-local"
+DEFAULT_LOCAL_INTERFACE="ether2-master"
 echo -n "Type in local MKT interface (Enter to use guessed $DEFAULT_LOCAL_INTERFACE): "
 read LOCAL_INTERFACE
 if [ x == x$LOCAL_INTERFACE ];
@@ -82,7 +86,7 @@ then
   LOCAL_INTERFACE=$DEFAULT_LOCAL_INTERFACE
 fi
 
-DEFAULT_PUBLIC_INTERFACE="ether2-internet"
+DEFAULT_PUBLIC_INTERFACE="ether1-WAN"
 echo -n "Type in PUBLIC MKT interface (Enter to use guessed $DEFAULT_PUBLIC_INTERFACE): "
 read PUBLIC_INTERFACE
 if [ x == x$PUBLIC_INTERFACE ];
@@ -185,9 +189,12 @@ cat >$CONFIG_FILE_PATH <<EOF
 
   add chain=forward action=accept src-address=$VPC_NET in-interface=$PUBLIC_INTERFACE
   add chain=forward action=accept dst-address=$VPC_NET in-interface=$LOCAL_INTERFACE
+
+# nat rule
+# critically important to AWS connectivity that this rule be ahead of "masquerade".
 /ip firewall nat
-  add chain=srcnat action=src-nat to-addresses=$LOCAL_NET dst-address=$VPC_NET place-before=0
-  add chain=dstnat action=accept src-address=$VPC_NET in-interface=$PUBLIC_INTERFACE place-before=0
+  add comment=$VPN_NAME chain=srcnat action=src-nat to-addresses=$LOCAL_NET dst-address=$VPC_NET place-before=0
+  add comment=$VPN_NAME chain=dstnat action=accept src-address=$VPC_NET in-interface=$PUBLIC_INTERFACE place-before=0
 
 
 /routing bgp instance
